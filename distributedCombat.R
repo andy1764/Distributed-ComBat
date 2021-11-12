@@ -12,6 +12,8 @@
 #' @param mod Optional design matrix of covariates to preserve, usually from 
 #'    \link[stats]{model.matrix}. This matrix needs to have the same columns
 #'    across sites. The rows must be in the same order as the data columns.
+#' @param ref.batch Optional, reference batch used to determine target mean and
+#'   variance. Must be specified for all sites.
 #' @param central.out Output list from \code{distributedCombat_central}. Output
 #'   of \code{distributedCombat_site} will depend on the values of 
 #'   \code{central.out}. If \code{NULL}, then the output will be sufficient for
@@ -33,7 +35,8 @@
 #' 
 distributedCombat_site <- function(dat, 
                                    batch, 
-                                   mod=NULL, 
+                                   mod=NULL,
+                                   ref.batch=NULL,
                                    central.out=NULL,
                                    eb=TRUE, 
                                    parametric=TRUE,
@@ -64,7 +67,7 @@ distributedCombat_site <- function(dat,
   }
   
   ##################### Getting design ############################
-  dataDict <- getDataDictDC(batch, mod, verbose=verbose, mean.only=mean.only, ref.batch=NULL)
+  dataDict <- getDataDictDC(batch, mod, verbose=verbose, mean.only=mean.only, ref.batch=ref.batch)
   design <- dataDict[["design"]]
   ####################################################################
   
@@ -86,6 +89,16 @@ distributedCombat_site <- function(dat,
   dataDictSite$n.batch <- sum(inclBat)
   dataDictSite$n.batches <- dataDict$n.batches[inclBat]
   dataDictSite$batch.design <- as.matrix(dataDict$batch.design[,inclBat])
+  
+  # remove reference batch information if reference batch is not in site
+  if (!is.null(ref.batch)) {
+    if (dataDictSite$ref %in% dataDictSite$batch) {
+      dataDictSite$ref <- which(levels(as.factor(dataDictSite$batch))==ref.batch)
+    } else {
+      dataDictSite$ref <- NULL
+      dataDictSite$ref.batch <- NULL
+    }
+  }
   
   if (is.null(central.out)) {
     site_out <- list(
@@ -206,8 +219,13 @@ distributedCombat_site <- function(dat,
 #' 
 #' @param site.outs List or vector of filenames containing site outputs.
 #' @param file File name of .Rdata file to export
+#' @param ref.batch Optional, reference batch used to determine target mean and
+#'   variance
+#' @param verbose Whether to print messages to console
 distributedCombat_central <- function(site.outs,
-                                      file = NULL) {
+                                      file = NULL,
+                                      ref.batch = NULL,
+                                      verbose = FALSE) {
   if (!is.character(file)) {
     warning("Must specify filename to output results as a file. Currently
             saving output to current workspace only.")
@@ -230,17 +248,17 @@ distributedCombat_central <- function(site.outs,
   n.arrays <- lapply(site.outs, function(x) x$dataDict$n.array)
   
   # # get reference batch if specified
-  # if (!is.null(ref.batch)){
-  #   if (!(ref.batch%in%levels(batch))) {
-  #     stop("reference level ref.batch is not found in batch")
-  #   }
-  #   if (verbose){
-  #     cat(paste0("[combat] Using batch=",ref.batch, " as a reference batch \n"))
-  #   }
-  #   ref <- which(batch_levels==ref.batch) # find the reference
-  # } else {
-  #   ref <- NULL
-  # }
+  if (!is.null(ref.batch)){
+    if (!(ref.batch%in%levels(batch))) {
+      stop("reference level ref.batch is not found in batch")
+    }
+    if (verbose){
+      cat(paste0("[combat] Using batch=",ref.batch, " as a reference batch \n"))
+    }
+    ref <- which(batch_levels==ref.batch) # find the reference
+  } else {
+    ref <- NULL
+  }
 
   # check if beta estimates have been given to sites
   step1s <- sapply(site.outs, function(x) is.null(x$sigma.site))
@@ -254,7 +272,11 @@ distributedCombat_central <- function(site.outs,
   ls2 <- Reduce("+", lapply(site.outs, function(x) x$ls.site[[2]]))
   B.hat <- crossprod(solve(ls1), ls2)
   
-  grand.mean <- t(B.hat[ref, ])
+  if (!is.null(ref.batch)) {
+    grand.mean <- t(B.hat[ref, ])
+  } else {
+    grand.mean <- crossprod(n.batches/n.array, B.hat[1:n.batch,])
+  }
   stand.mean <- crossprod(grand.mean, t(rep(1,n.array)))
   
   if (step1) {
@@ -272,12 +294,12 @@ distributedCombat_central <- function(site.outs,
   }
   
   # #### Step 2: Get standardization parameters ####
+  vars <- lapply(site.outs, function(x) x$sigma.site)
+  
+  # if ref.batch specified, use estimated variance from reference site
   if (!is.null(ref.batch)){
-    ref.dat <- dat[, batches[[ref]]]
-    factors <- (n.batches[ref]/(n.batches[ref]-1))
-    var.pooled <- rowVars(ref.dat-t(design[batches[[ref]], ]%*%B.hat), na.rm=TRUE)/factors
+    var.pooled = vars[[ref]]
   } else {
-    vars <- lapply(site.outs, function(x) x$sigma.site)
     var.pooled = rep(0, length(vars[[1]]))
     for (i in 1:m) {
       var.pooled = var.pooled + n.arrays[[i]]*vars[[i]]
