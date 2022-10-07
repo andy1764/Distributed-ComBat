@@ -22,4 +22,4 @@ Two sample codes are provided *dCombat_central_sample.R* and *dCombat_site_sampl
 5. Send these harmonization parameters to each site, which can then perform the final dComBat locally.
 
 ## 3. In other programming languages
-The Python version of this code is available in a separate repository: https://github.com/Terf/neuroCombat/tree/master/distributedCombat
+The Python version of this code is available in the `Python/` directory.
