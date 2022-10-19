@@ -3,8 +3,27 @@ import numpy as np
 import patsy
 import math
 
-def mad_var(data, axis=None):
-    return (1.482602218505602*np.median(abs(data - np.median(data, axis=axis, keepdims=True)), axis, keepdims=False)) ** 2
+def biweight_midvar(data, center=None, axis=None):
+    if center is None:
+        center = np.median(data, axis=axis, keepdims=True)
+        
+    mad = np.median(abs(data - center), axis=axis, keepdims=True)
+    
+    d = data - center
+    u = d/(9*mad)
+    
+    indic = np.abs(u) < 1
+    
+    num = d * d * (1. - u**2)**4
+    num[~indic] = 0.
+    num = np.sum(num, axis=axis)
+    
+    dem = (1. - u**2) * (1. - 5.*u**2)
+    dem[~indic] = 0.
+    dem = np.abs(np.sum(dem, axis=axis))**2
+    
+    n = np.sum(np.ones(data.shape), axis=axis)
+    return n * num/dem
 
 def betaNA(yy, designn):
     # designn <- designn[!is.na(yy),]
@@ -62,8 +81,8 @@ def it_sol(sdat, g_hat, d_hat, g_bar, t2, a, b, conv=0.0001, robust=False):
         g_new = np.array(postmean(g_hat, g_bar, n, d_old, t2))
         
         if robust:
-            # sum2 = n*biweight_midvariance(sdat,M=g_new,axis=1) # PROBLEM: MAD is still calculated using sample median
-            sum2 = n*(1.482602218505602*np.median(abs(sdat - np.dot(g_new.reshape((g_new.shape[0], 1)), ones)), axis = 1)) ** 2
+            sum2 = n*biweight_midvar(sdat,center=g_new.reshape((g_new.shape[0], 1)),axis=1)
+            # sum2 = n*(1.482602218505602*np.median(abs(sdat - np.dot(g_new.reshape((g_new.shape[0], 1)), ones)), axis = 1)) ** 2
         else:
             sum2 = ((sdat - np.dot(g_new.reshape((g_new.shape[0], 1)), ones)) ** 2).sum(
                 axis=1
@@ -251,7 +270,7 @@ def getNaiveEstimators(s_data, data_dict, hasNAs, mean_only, robust):
         if mean_only:
             delta.hat.append(np.ones(s_data.shape[1]))
         elif robust:
-            delta_hat.append(mad_var(s_data.iloc[:, i[0]],axis=1))
+            delta_hat.append(biweight_midvar(s_data.iloc[:, i[0]],axis=1))
         else:
             delta_hat.append(np.var(s_data.iloc[:, i[0]],axis=1,ddof=1))
     delta_hat = np.array(delta_hat)
